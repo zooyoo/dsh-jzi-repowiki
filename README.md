@@ -84,18 +84,27 @@ dsh plugin --profile desktop install github:WuuShan/dsh-plugin-repowiki
 ## 兼容性说明
 
 - `repowiki-metadata.json` 中的 `catalogue_think_content`、`raw_data` 等字段在 Qoder 侧是云端加密内容，本插件生成时留空/省略——**页面文件与目录结构完全兼容**；Qoder 重新生成 Wiki 时会以自己的服务端数据为准，不会破坏本插件的 `content/*.md`。
-- 面板数据通过宿主 `webServer` 的同源路由 `/plugins/dsh-plugin-repowiki/api/*` 提供（只读），不依赖任何自定义 Remote 命名空间，因此对 DSH 升级有良好的前向兼容性。
+- 插件 `0.1.4` 以 **DSH `0.2.2-rc.1`** 为适配基线，声明 `engines.dsh: ">=0.2.2-rc.1 <0.3.0"`，并使用 `@deepseek-ai/dsh-tools: "^0.2.2-rc.1"`。该范围用于宿主兼容性检查；其他版本仍需单独验证。
+- 文件解析按目标宿主接口将取消信号放入 `ctx.fs.resolve(path, { cwd, signal })`；写入继续经过宿主的 `fs/write-intent` 和当前会话的沙箱策略。
+- 面板数据通过宿主 `webServer` 的同源路由 `/plugins/dsh-plugin-repowiki/api/*` 提供（只读）。路由与可选服务的注入作用域绑定，服务卸载时撤销，注册中途失败时回滚；没有 Web 服务时仍可使用 Wiki 工具。
 
 ## 开发
 
-```bash
-git clone https://github.com/WuuShan/dsh-plugin-repowiki
-# 两个半边都是无构建的纯 ESM/浏览器 bundle：
-#   lib/index.js  —— host 半（Node ESM，工具 + 路由）
-#   lib/client.js —— 浏览器半（window.__ModuleLoader__.load 工厂格式，React createElement 风格）
-# 改完直接从本地路径安装调试：
-dsh plugin --profile desktop install file:E:/path/to/dsh-plugin-repowiki
+两个入口均无需构建：`lib/index.js` 是 Node ESM 宿主插件，`lib/client.js` 是通过 `window.__ModuleLoader__.load` 加载的浏览器模块。
+
+从源码安装开发依赖后执行检查和打包（Windows 使用 PowerShell 7）：
+
+```powershell
+$ErrorActionPreference = 'Stop'
+npm install --ignore-scripts
+npm --script-shell=pwsh run check
+npm --script-shell=pwsh test
+npm pack --ignore-scripts
 ```
+
+`npm test` 在当前进程运行 Node 测试，兼容禁止子进程管道的 Windows 沙箱。回归覆盖初始化、扫描、页面和知识卡写入、浏览 API、取消信号、路由卸载/重新注入及注册失败回滚；文件服务、沙箱策略和服务生命周期使用测试适配器，不代表完整桌面宿主或浏览器端到端验收。
+
+生成的 `dsh-plugin-repowiki-0.1.4.tgz` 可通过 DSH 插件管理安装；发布包只包含运行入口、Cordis 补丁、说明和许可证，测试文件与本地验证依赖不打入包。
 
 ## License
 

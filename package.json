@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-repowiki",
   "displayName": "DSH Repo Wiki",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Qoder-style Repo Wiki for DeepSeek Harness: an agent generates and incrementally maintains a Chinese repo wiki in the Qoder .qoder/repowiki-compatible format, with a DSH sidebar browsing panel.",
   "author": "WuuShan",
   "license": "MIT",
@@ -16,7 +16,12 @@
     "qoder"
   ],
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
+  },
+  "scripts": {
+    "check": "node --check lib/index.js && node --check lib/client.js",
+    "test": "node --test --experimental-test-isolation=none test/*.test.js"
   },
   "repository": {
     "type": "git",
@@ -53,7 +58,7 @@
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.2"
   }
 }
