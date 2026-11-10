@@ -85,7 +85,7 @@ dsh plugin --profile desktop install github:WuuShan/dsh-plugin-repowiki
 ## 兼容性说明
 
 - `repowiki-metadata.json` 中的 `catalogue_think_content`、`raw_data` 等字段在 Qoder 侧是云端加密内容，本插件生成时留空/省略——**页面文件与目录结构完全兼容**；Qoder 重新生成 Wiki 时会以自己的服务端数据为准，不会破坏本插件的 `content/*.md`。
-- 插件 `0.1.6` 以 **DSH `0.2.2-rc.1`** 为适配基线，声明 `engines.dsh: ">=0.2.2-rc.1 <0.3.0"`，并使用 `@deepseek-ai/dsh-tools: "^0.2.2-rc.1"`。该范围用于宿主兼容性检查；其他版本仍需单独验证。
+- 插件 `0.1.7` 以 **DSH `0.2.2-rc.1`** 为适配基线，声明 `engines.dsh: ">=0.2.2-rc.1 <0.3.0"`，并使用 `@deepseek-ai/dsh-tools: "^0.2.2-rc.1"`。该范围用于宿主兼容性检查；其他版本仍需单独验证。
 - 浏览已有 Qoder Wiki 时遵循 `wiki_catalogs.parent_id`、`order` 与 `wiki_items.catalog_id`；`order` 缺省或为 `null` 时按首项处理。目录内同名概述页合并为章节入口，磁盘实际路径保持不变；缺少元数据时回退到文件目录，不隐藏未登记的页面。
 - 文件解析按目标宿主接口将取消信号放入 `ctx.fs.resolve(path, { cwd, signal })`；写入继续经过宿主的 `fs/write-intent` 和当前会话的沙箱策略。
 - 面板数据通过宿主 `webServer` 的同源路由 `/plugins/dsh-plugin-repowiki/api/*` 提供（只读）。路由与可选服务的注入作用域绑定，服务卸载时撤销，注册中途失败时回滚；没有 Web 服务时仍可使用 Wiki 工具。
@@ -93,10 +93,11 @@ dsh plugin --profile desktop install github:WuuShan/dsh-plugin-repowiki
 ## 性能与缓存
 
 - 阅读正文使用可用宽度，长表格和代码块在各自区域内横向滚动；正文段落样式不覆盖 SVG 内部标签的行高和间距，避免 Mermaid 多行文字被裁切。
-- 会话消息更新不会触发正文重新解析；目录和搜索的更新与 Markdown 渲染隔离。最近的 3 篇已渲染页面保留 DOM，减少返回页面时的正文和图表重复生成。阅读滚动区与当前页的 Mermaid SVG 分别合成，减少复杂图表随滚动重复绘制。
+- 会话消息更新不会触发正文重新解析；目录和搜索的更新与 Markdown 渲染隔离。支持 `react-dom.createPortal` 的宿主最多保留 12 篇已渲染正文、共 512 Ki 字符（超大当前页单独保留）；旧宿主回退为 3 篇。淘汰顺序与挂载顺序分开，返回缓存页复用正文，已完成的图表留在隐藏容器中复用 SVG。离页时，尚有未完成图表的正文容器移出文档，减少增强器继续处理隐藏页面；返回后重新生成这些未完成图表，已经开始的图表计算无法中断。阅读滚动区与当前页的 Mermaid SVG 分别合成，减少复杂图表随滚动重复绘制。
 - 页面数据最多缓存 12 篇、共约 2 Mi 字符，按工作区隔离；切换时先显示已有内容，同时重新读取正文核验变更。空闲时预读相邻页面；点击时重新发起读取，较早的预读响应不能覆盖本次结果。同页重验保留滚动位置；手动刷新、切换工作区或卸载面板时清理缓存并取消未完成的请求。
 - 浏览 API 复用目录树和解析后的元数据，按文件版本和目录变更失效，最多保留 8 个工作区快照；正文请求仍读取实际文件。手动刷新强制重建快照，不依赖过期时间掩盖文件变化。
-- 性能验证区分服务端耗时、首次正文显示、热切页、交互后绘制和首次图表生成。100 ms 是交互优化目标；首次加载宿主模块、复杂 Markdown 和外部图表增强器的首次渲染需单独测量，不能由 API 耗时推导。
+- 首次目录请求携带 `includeFirstPage=1`，首篇不超过 64 KiB 时将完整正文与目录一起返回，减少串行请求；超限或读取失败时继续使用普通正文请求，目录保持可用。不截断 Markdown，也不为旧客户端额外读取首篇。
+- 性能验证分别记录点击同步处理、API、完整正文 DOM 就绪、近似绘制和图表完成。1 ms 目标按这些阶段分别评估，不把亚毫秒的点击处理或接口耗时当作整页可见时间；显示刷新周期、宿主模块和复杂图表的首次渲染仍需单独测量。
 
 ## 开发
 
@@ -118,7 +119,9 @@ npm pack --ignore-scripts
 
 `test/browser-performance.mjs` 在同一环境测量真实 Wiki 的正文显示、切页、目录、搜索、会话更新和滚动帧间隔，并记录模块源码指纹。图表验证需显式加载本机已安装的 `dsh-mermaid` 增强器及其公开运行时；没有图表时标为未测，不以代码块渲染代替图表通过。可通过 `REPOWIKI_CLIENT`、`REPOWIKI_BACKEND` 指定基线源码，通过 `REPOWIKI_PERF_LABEL` 分开保存报告。
 
-生成的 `dsh-plugin-repowiki-0.1.6.tgz` 可通过 DSH 插件管理安装；发布包只包含运行入口、Cordis 补丁、说明和许可证，测试文件与本地验证依赖不打入包。
+`test/browser-navigation-performance.mjs` 补充多篇不同文档连续导航、返回旧页和快速连点验证，记录正文尾部与结构完整性、实际 React 事件委派、DOM 增删和运行时资源时序。`REPOWIKI_NAV_ROUNDS`、`REPOWIKI_NAV_PAGES` 控制轮次和不同页面数；`REPOWIKI_NAV_BUDGET_MS` 指定可见延迟预算（默认 1 ms，未达到时保留失败记录，不修改测量口径）。
+
+生成的 `dsh-plugin-repowiki-0.1.7.tgz` 可通过 DSH 插件管理安装；发布包只包含运行入口、Cordis 补丁、说明和许可证，测试文件与本地验证依赖不打入包。
 
 ## License
 

@@ -5,11 +5,12 @@ import test from 'node:test'
 
 const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
 
-function createClient({ sessionId, recentWorkspaceId = 'workspace-b', sessions = {}, wikiByWorkspace = {} }) {
+function createClient({ sessionId, recentWorkspaceId = 'workspace-b', sessions = {}, wikiByWorkspace = {}, pagesByWorkspace = {} }) {
   const values = []
   let hook = 0
   let effects = []
   const requests = []
+  const urls = []
   const pending = []
   let nextDelay = null
   const react = {
@@ -46,7 +47,10 @@ function createClient({ sessionId, recentWorkspaceId = 'workspace-b', sessions =
     fetch(url) {
       const workspace = new URL(url, 'http://localhost').searchParams.get('workspaceId')
       requests.push(workspace)
-      const body = wikiByWorkspace[workspace] ?? { state: 'no-wiki' }
+      urls.push(url)
+      const body = new URL(url, 'http://localhost').pathname.endsWith('/page')
+        ? (pagesByWorkspace[workspace] ?? { state: 'not-found' })
+        : (wikiByWorkspace[workspace] ?? { state: 'no-wiki' })
       const delay = nextDelay
       nextDelay = null
       const response = (delay ?? Promise.resolve()).then(() => ({ ok: true, text: async () => JSON.stringify(body) }))
@@ -78,7 +82,7 @@ function createClient({ sessionId, recentWorkspaceId = 'workspace-b', sessions =
     nextDelay = new Promise((resolve) => { release = resolve })
     return release
   }
-  return { requests, wikiByWorkspace, render, settle, mount, runEffects, delayNext }
+  return { requests, urls, wikiByWorkspace, render, settle, mount, runEffects, delayNext }
 }
 
 function find(node, predicate) {
@@ -94,6 +98,34 @@ function find(node, predicate) {
 }
 
 const wiki = (workspace) => ({ state: 'ok', workspace, pageCount: 1, tree: [] })
+
+test('目录内联首篇后在首次提交显示正文，不再串行请求正文接口', async () => {
+  const initialPage = { state: 'ok', path: '概述/概述', title: '概述', markdown: '# 概述\n\n完整首篇正文', size: 40 }
+  const app = createClient({
+    sessionId: 'session-a',
+    wikiByWorkspace: { 'workspace-a': { ...wiki('workspace-a'),
+      tree: [{ name: '概述', page: { path: initialPage.path, title: initialPage.title }, children: [] }], initialPage } },
+  })
+  const tree = await app.mount()
+  assert.equal(find(tree, (node) => node.props?.className === 'rw-title').children[0], '概述')
+  assert.equal(app.urls.length, 1)
+  assert.equal(new URL(app.urls[0], 'http://localhost').searchParams.get('includeFirstPage'), '1')
+})
+
+test('未内联首篇或路径不匹配时兼容普通正文请求', async () => {
+  for (const initialPage of [undefined, { state: 'ok', path: '其他页', markdown: '错误正文' }]) {
+    const firstPage = { state: 'ok', path: '概述/概述', title: '实际首篇', markdown: '# 实际首篇\n\n正文接口返回内容' }
+    const app = createClient({ sessionId: 'session-a', pagesByWorkspace: { 'workspace-a': firstPage },
+      wikiByWorkspace: { 'workspace-a': { ...wiki('workspace-a'), initialPage,
+        tree: [{ name: '概述', page: { path: firstPage.path, title: firstPage.title }, children: [] }] } },
+    })
+    await app.mount()
+    await app.settle()
+    assert.equal(find(app.render(), (node) => node.props?.className === 'rw-title').children[0], firstPage.title)
+    assert.equal(app.urls.length, 2)
+    assert.equal(new URL(app.urls[1], 'http://localhost').searchParams.get('path'), firstPage.path)
+  }
+})
 
 test('显式会话所属工作区优先于最近工作区', async () => {
   const app = createClient({

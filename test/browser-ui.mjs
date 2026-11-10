@@ -292,12 +292,19 @@ async function connect(url, beforeNavigate) {
     socket.onerror = () => { clearTimeout(timer); reject(new Error('CDP WebSocket 连接失败')) }
   })
   let sequence = 0
-  const pending = new Map()
+  const pending = new Map(), networkRequests = new Map()
   socket.onmessage = event => {
     const message = JSON.parse(event.data)
+    if (message.method === 'Network.requestWillBeSent') {
+      const { requestId, request, type } = message.params
+      const url = new URL(request.url)
+      // 仅留本地资源路径与 Wiki 页面参数，避免记录宿主认证和无关查询参数。
+      networkRequests.set(requestId, { path: url.pathname, pagePath: url.searchParams.get('path'), type })
+    }
     if (message.method === 'Runtime.exceptionThrown') report.exceptions.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text)
     if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') report.consoleErrors.push(message.params.args.map(arg => arg.description ?? arg.value ?? '').join(' '))
-    if (message.method === 'Network.loadingFailed' && !message.params.canceled) report.networkFailures.push({ error: message.params.errorText, type: message.params.type })
+    if (message.method === 'Network.loadingFailed' && !message.params.canceled) report.networkFailures.push({ error: message.params.errorText, type: message.params.type, requestId: message.params.requestId, ...networkRequests.get(message.params.requestId) })
+    if (['Network.loadingFailed', 'Network.loadingFinished'].includes(message.method)) networkRequests.delete(message.params.requestId)
     if (message.method === 'LayerTree.layerTreeDidChange' && message.params.layers) report.layerTree = message.params.layers
     if (message.method === 'Network.responseReceived' && message.params.response.status >= 400) report.networkFailures.push({ status: message.params.response.status, url: message.params.response.url, type: message.params.type })
     if (message.id && pending.has(message.id)) { const callback = pending.get(message.id); pending.delete(message.id); callback(message) }
